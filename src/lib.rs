@@ -116,7 +116,7 @@ impl ConnectionPoolStorage {
 
     fn select_conn(
         &mut self,
-        _selection_strategy: &SelectionStrategy,
+        _selection_strategy: &SelectionStrategy, // completely ignored for now
     ) -> Option<(String, Arc<Connection>)> {
         if self.cache.is_empty() {
             return None;
