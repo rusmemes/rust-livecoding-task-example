@@ -1,4 +1,4 @@
-use livecoding_conn_pool::{Connection, ConnectionPool, SelectionStrategy};
+use livecoding_conn_pool::{Connection, ConnectionPool};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -9,8 +9,8 @@ async fn main() {
 
     for _ in 0..3 {
         {
-            let wrapper = pool.get(&SelectionStrategy::Random).await;
-            println!("{}", wrapper.connection.as_ref().unwrap().id.clone());
+            let wrapper = pool.get().await;
+            println!("{}", wrapper.connection().unwrap().id.clone());
         }
     }
 
@@ -23,7 +23,7 @@ async fn main() {
     });
 
     {
-        let wrapper = pool.get(&SelectionStrategy::Random).await;
-        println!("{}", wrapper.connection.as_ref().unwrap().id.clone());
+        let wrapper = pool.get().await;
+        println!("{}", wrapper.connection().as_ref().unwrap().id.clone());
     }
 }

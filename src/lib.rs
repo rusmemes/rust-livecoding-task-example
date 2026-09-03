@@ -2,24 +2,31 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 
-pub enum SelectionStrategy {
-    Random,
-    LRU,
+struct GuardState {
+    key: String,
+    pool: Arc<Mutex<ConnectionPoolStorage>>,
+    connection: Arc<Connection>,
 }
 
-pub struct Wrapper {
-    pool: Option<Arc<Mutex<ConnectionPoolStorage>>>,
-    pub connection: Option<Arc<Connection>>,
-    return_callback: Option<Box<dyn FnOnce(Arc<Mutex<ConnectionPoolStorage>>, Arc<Connection>)>>,
+pub struct Guard {
+    state: Option<GuardState>,
 }
 
-impl Drop for Wrapper {
+impl Guard {
+    pub fn connection(&self) -> Option<Arc<Connection>> {
+        self.state.as_ref().map(|state| state.connection.clone())
+    }
+}
+
+impl Drop for Guard {
     fn drop(&mut self) {
-        let callback = self.return_callback.take();
-        let pool = self.pool.take();
-        let conn = self.connection.take();
-        if let (Some(callback), Some(pool), Some(conn)) = (callback, pool, conn) {
-            callback(pool, conn);
+        if let Some(GuardState {
+            key,
+            pool,
+            connection,
+        }) = self.state.take()
+        {
+            tokio::spawn(async { ConnectionPoolStorage::return_to_pool(pool, key, connection).await });
         }
     }
 }
@@ -53,12 +60,12 @@ impl ConnectionPool {
         ConnectionPoolStorage::add(self.connection_pool_storage.clone(), key, Arc::new(conn)).await
     }
 
-    pub async fn remove(&mut self, id: &str) -> Option<Arc<Connection>> {
-        self.connection_pool_storage.lock().await.remove(id).await
+    pub async fn remove(&mut self, key: &str) -> Option<Arc<Connection>> {
+        self.connection_pool_storage.lock().await.remove(key).await
     }
 
-    pub async fn get(&mut self, selection_strategy: &SelectionStrategy) -> Wrapper {
-        ConnectionPoolStorage::get(self.connection_pool_storage.clone(), selection_strategy).await
+    pub async fn get(&mut self) -> Guard {
+        ConnectionPoolStorage::get(self.connection_pool_storage.clone()).await
     }
 }
 
@@ -87,17 +94,14 @@ impl ConnectionPoolStorage {
         self.cache.remove(id).flatten()
     }
 
-    async fn get(
-        pool: Arc<Mutex<ConnectionPoolStorage>>,
-        selection_strategy: &SelectionStrategy,
-    ) -> Wrapper {
+    async fn get(pool: Arc<Mutex<ConnectionPoolStorage>>) -> Guard {
         let key;
-        let conn;
+        let connection;
         loop {
             let mut guard = pool.lock().await;
-            if let Some((k, c)) = guard.select_conn(selection_strategy) {
+            if let Some((k, c)) = guard.select_conn() {
                 key = k;
-                conn = c;
+                connection = c;
                 break;
             }
             let arc = guard.value_added.clone();
@@ -105,18 +109,17 @@ impl ConnectionPoolStorage {
             arc.notified().await;
         }
 
-        Wrapper {
-            pool: Some(pool),
-            connection: Some(conn),
-            return_callback: Some(Box::new(|pool, conn| {
-                tokio::spawn(ConnectionPoolStorage::return_to_pool(pool, key, conn));
-            })),
+        Guard {
+            state: Some(GuardState {
+                key,
+                pool,
+                connection,
+            }),
         }
     }
 
     fn select_conn(
         &mut self,
-        _selection_strategy: &SelectionStrategy, // completely ignored for now
     ) -> Option<(String, Arc<Connection>)> {
         if self.cache.is_empty() {
             return None;
