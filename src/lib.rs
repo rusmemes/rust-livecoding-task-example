@@ -13,8 +13,11 @@ pub struct Guard {
 }
 
 impl Guard {
-    pub fn connection(&self) -> Option<Arc<Connection>> {
-        self.state.as_ref().map(|state| state.connection.clone())
+    pub fn connection(&self) -> &Connection {
+        self.state
+            .as_ref()
+            .map(|state| state.connection.as_ref())
+            .expect("Guard must be initialized")
     }
 }
 
