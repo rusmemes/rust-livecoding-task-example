@@ -26,7 +26,7 @@ impl Drop for Guard {
             connection,
         }) = self.state.take()
         {
-            tokio::spawn(async { ConnectionPoolStorage::return_to_pool(pool, key, connection).await });
+            tokio::spawn(ConnectionPoolStorage::return_to_pool(pool, key, connection));
         }
     }
 }
@@ -118,12 +118,11 @@ impl ConnectionPoolStorage {
         }
     }
 
-    fn select_conn(
-        &mut self,
-    ) -> Option<(String, Arc<Connection>)> {
+    fn select_conn(&mut self) -> Option<(String, Arc<Connection>)> {
         if self.cache.is_empty() {
             return None;
         }
+
         let mut k: Option<String> = None;
         for key in self.cache.keys() {
             let option = self.cache.get(key);
