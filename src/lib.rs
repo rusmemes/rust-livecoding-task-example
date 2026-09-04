@@ -65,7 +65,7 @@ impl ConnectionPool {
     }
 
     pub async fn get(&mut self) -> Guard {
-        ConnectionPoolStorage::get(self.connection_pool_storage.clone()).await
+        ConnectionPoolStorage::get_next_available(self.connection_pool_storage.clone()).await
     }
 }
 
@@ -90,11 +90,11 @@ impl ConnectionPoolStorage {
         }
     }
 
-    async fn remove(&mut self, id: &str) -> Option<Arc<Connection>> {
-        self.cache.remove(id).flatten()
+    async fn remove(&mut self, key: &str) -> Option<Arc<Connection>> {
+        self.cache.remove(key).flatten()
     }
 
-    async fn get(pool: Arc<Mutex<ConnectionPoolStorage>>) -> Guard {
+    async fn get_next_available(pool: Arc<Mutex<ConnectionPoolStorage>>) -> Guard {
         let key;
         let connection;
         loop {
