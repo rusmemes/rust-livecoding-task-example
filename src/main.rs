@@ -1,10 +1,15 @@
-use livecoding_conn_pool::{Connection, ConnectionPool};
+use livecoding_conn_pool::Pool;
 use std::time::Duration;
 use tokio::time::sleep;
 
+#[derive(Debug, Clone)]
+pub struct Connection {
+    pub id: String,
+}
+
 #[tokio::main]
 async fn main() {
-    let mut pool = ConnectionPool::new();
+    let mut pool = Pool::new();
     pool.add("1".to_string(), Connection { id: "1".to_string()}).await;
 
     for _ in 0..3 {
@@ -13,7 +18,7 @@ async fn main() {
         } // here it's getting dropped
     }
 
-    pool.remove("1").await;
+    pool.remove(&"1".to_string()).await;
 
     let mut pool_clone = pool.clone();
     tokio::spawn(async move {
