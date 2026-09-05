@@ -81,11 +81,11 @@ impl<K: PoolKey, V: PoolValue> Pool<K, V> {
     }
 
     pub async fn add(&mut self, key: K, value: V) {
-        PoolStorage::add(self.connection_pool_storage.clone(), key, value).await
+        PoolStorage::add(&self.connection_pool_storage, key, value).await
     }
 
     pub async fn remove(&mut self, key: &K) -> Option<V> {
-        self.connection_pool_storage.lock().await.remove(key).await
+        PoolStorage::remove(&self.connection_pool_storage, key).await
     }
 
     pub async fn get(&mut self) -> Guard<K, V> {
@@ -94,7 +94,7 @@ impl<K: PoolKey, V: PoolValue> Pool<K, V> {
 }
 
 impl<K: PoolKey, V: PoolValue> PoolStorage<K, V> {
-    async fn add(pool: Arc<Mutex<PoolStorage<K, V>>>, key: K, value: V) {
+    async fn add(pool: &Mutex<PoolStorage<K, V>>, key: K, value: V) {
         let mut guard = pool.lock().await;
         guard.cache.insert(key, Some(value));
         guard.value_added.notify_one();
@@ -110,11 +110,12 @@ impl<K: PoolKey, V: PoolValue> PoolStorage<K, V> {
         }
     }
 
-    async fn remove(&mut self, key: &K) -> Option<V> {
-        self.cache.remove(key).flatten()
+    async fn remove(pool: &Mutex<PoolStorage<K, V>>, key: &K) -> Option<V> {
+        pool.lock().await.cache.remove(key).flatten()
     }
 
     async fn get_next_available(pool: Arc<Mutex<PoolStorage<K, V>>>) -> Guard<K, V> {
+        let mut notify = None;
         let key;
         let value;
         loop {
@@ -124,9 +125,11 @@ impl<K: PoolKey, V: PoolValue> PoolStorage<K, V> {
                 value = c;
                 break;
             }
-            let arc = guard.value_added.clone();
+            if notify.is_none() {
+                notify = Some(guard.value_added.clone());
+            }
             drop(guard);
-            arc.notified().await;
+            notify.as_ref().unwrap().notified().await
         }
 
         Guard {
