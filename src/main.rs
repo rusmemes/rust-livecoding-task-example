@@ -14,7 +14,9 @@ async fn main() {
 
     for _ in 0..3 {
         {
-            println!("{}", pool.get().await.id);
+            let id = &mut pool.get().await.id;
+            id.push('!');
+            println!("{}", id);
         } // here it's getting dropped
     }
 

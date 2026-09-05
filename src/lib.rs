@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::hash::Hash;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 
@@ -15,7 +15,7 @@ impl<T> PoolValue for T where T: Sync + Send + 'static {}
 struct GuardState<K, V> {
     key: K,
     pool: Arc<Mutex<PoolStorage<K, V>>>,
-    value: Arc<V>,
+    value: V,
 }
 
 pub struct Guard<K: PoolKey, V: PoolValue> {
@@ -26,7 +26,14 @@ impl<K: PoolKey, V: PoolValue> Guard<K, V> {
     pub fn value(&self) -> &V {
         self.state
             .as_ref()
-            .map(|state| state.value.as_ref())
+            .map(|state| &state.value)
+            .expect("Guard must be initialized")
+    }
+
+    pub fn value_mut(&mut self) -> &mut V {
+        self.state
+            .as_mut()
+            .map(|state| &mut state.value)
             .expect("Guard must be initialized")
     }
 }
@@ -39,21 +46,22 @@ impl<K: PoolKey, V: PoolValue> Deref for Guard<K, V> {
     }
 }
 
+impl<K: PoolKey, V: PoolValue> DerefMut for Guard<K, V> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.value_mut()
+    }
+}
+
 impl<K: PoolKey, V: PoolValue> Drop for Guard<K, V> {
     fn drop(&mut self) {
-        if let Some(GuardState {
-            key,
-            pool,
-            value,
-        }) = self.state.take()
-        {
+        if let Some(GuardState { key, pool, value }) = self.state.take() {
             tokio::spawn(PoolStorage::return_to_pool(pool, key, value));
         }
     }
 }
 
 struct PoolStorage<K, V> {
-    cache: HashMap<K, Option<Arc<V>>>,
+    cache: HashMap<K, Option<V>>,
     value_added: Arc<Notify>,
 }
 
@@ -72,11 +80,11 @@ impl<K: PoolKey, V: PoolValue> Pool<K, V> {
         }
     }
 
-    pub async fn add(&mut self, key: K, conn: V) {
-        PoolStorage::add(self.connection_pool_storage.clone(), key, Arc::new(conn)).await
+    pub async fn add(&mut self, key: K, value: V) {
+        PoolStorage::add(self.connection_pool_storage.clone(), key, value).await
     }
 
-    pub async fn remove(&mut self, key: &K) -> Option<Arc<V>> {
+    pub async fn remove(&mut self, key: &K) -> Option<V> {
         self.connection_pool_storage.lock().await.remove(key).await
     }
 
@@ -86,23 +94,23 @@ impl<K: PoolKey, V: PoolValue> Pool<K, V> {
 }
 
 impl<K: PoolKey, V: PoolValue> PoolStorage<K, V> {
-    async fn add(pool: Arc<Mutex<PoolStorage<K, V>>>, key: K, conn: Arc<V>) {
+    async fn add(pool: Arc<Mutex<PoolStorage<K, V>>>, key: K, value: V) {
         let mut guard = pool.lock().await;
-        guard.cache.insert(key, Some(conn));
+        guard.cache.insert(key, Some(value));
         guard.value_added.notify_one();
     }
 
-    async fn return_to_pool(pool: Arc<Mutex<PoolStorage<K, V>>>, key: K, conn: Arc<V>) {
+    async fn return_to_pool(pool: Arc<Mutex<PoolStorage<K, V>>>, key: K, value: V) {
         let mut guard = pool.lock().await;
         if let Some(option) = guard.cache.get_mut(&key) {
             if option.is_none() {
-                let _ = option.insert(conn);
+                let _ = option.insert(value);
                 guard.value_added.notify_one();
             }
         }
     }
 
-    async fn remove(&mut self, key: &K) -> Option<Arc<V>> {
+    async fn remove(&mut self, key: &K) -> Option<V> {
         self.cache.remove(key).flatten()
     }
 
@@ -122,15 +130,11 @@ impl<K: PoolKey, V: PoolValue> PoolStorage<K, V> {
         }
 
         Guard {
-            state: Some(GuardState {
-                key,
-                pool,
-                value,
-            }),
+            state: Some(GuardState { key, pool, value }),
         }
     }
 
-    fn next(&mut self) -> Option<(K, Arc<V>)> {
+    fn next(&mut self) -> Option<(K, V)> {
         if self.cache.is_empty() {
             return None;
         }
