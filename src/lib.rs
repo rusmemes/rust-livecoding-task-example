@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::ops::Deref;
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 
@@ -14,7 +15,7 @@ impl<T> PoolValue for T where T: Sync + Send + 'static {}
 struct GuardState<K, V> {
     key: K,
     pool: Arc<Mutex<PoolStorage<K, V>>>,
-    connection: Arc<V>,
+    value: Arc<V>,
 }
 
 pub struct Guard<K: PoolKey, V: PoolValue> {
@@ -22,11 +23,19 @@ pub struct Guard<K: PoolKey, V: PoolValue> {
 }
 
 impl<K: PoolKey, V: PoolValue> Guard<K, V> {
-    pub fn connection(&self) -> &V {
+    pub fn value(&self) -> &V {
         self.state
             .as_ref()
-            .map(|state| state.connection.as_ref())
+            .map(|state| state.value.as_ref())
             .expect("Guard must be initialized")
+    }
+}
+
+impl<K: PoolKey, V: PoolValue> Deref for Guard<K, V> {
+    type Target = V;
+
+    fn deref(&self) -> &Self::Target {
+        self.value()
     }
 }
 
@@ -35,10 +44,10 @@ impl<K: PoolKey, V: PoolValue> Drop for Guard<K, V> {
         if let Some(GuardState {
             key,
             pool,
-            connection,
+            value,
         }) = self.state.take()
         {
-            tokio::spawn(PoolStorage::return_to_pool(pool, key, connection));
+            tokio::spawn(PoolStorage::return_to_pool(pool, key, value));
         }
     }
 }
@@ -99,12 +108,12 @@ impl<K: PoolKey, V: PoolValue> PoolStorage<K, V> {
 
     async fn get_next_available(pool: Arc<Mutex<PoolStorage<K, V>>>) -> Guard<K, V> {
         let key;
-        let connection;
+        let value;
         loop {
             let mut guard = pool.lock().await;
             if let Some((k, c)) = guard.next() {
                 key = k;
-                connection = c;
+                value = c;
                 break;
             }
             let arc = guard.value_added.clone();
@@ -116,7 +125,7 @@ impl<K: PoolKey, V: PoolValue> PoolStorage<K, V> {
             state: Some(GuardState {
                 key,
                 pool,
-                connection,
+                value,
             }),
         }
     }

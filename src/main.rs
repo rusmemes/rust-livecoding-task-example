@@ -14,7 +14,7 @@ async fn main() {
 
     for _ in 0..3 {
         {
-            println!("{}", pool.get().await.connection().id);
+            println!("{}", pool.get().await.id);
         } // here it's getting dropped
     }
 
@@ -26,5 +26,5 @@ async fn main() {
         pool_clone.add("2".to_string(), Connection { id: "2".to_string()}).await;
     });
 
-    println!("{}", pool.get().await.connection().id);
+    println!("{}", pool.get().await.id);
 }
